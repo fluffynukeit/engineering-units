@@ -1,36 +1,67 @@
 {- |
+A numeric types to manage engineering units.
 
-A numeric type to manage engineering units.
+There are three distinct types: Unit, Value, and Quantity.
+
+    * A `Unit` describes a combination of SI units and a conversion factor.
+    * A `Value` is a numeric value associated with a`Unit`.
+    * A `Quantity` describes the physical significance of a `Unit`.
+
+A `Value` is created by applying a `Unit` to a `Double` using the `(*|)` operator,
+which is read as "multiply in units."
 
 Provides automatic unit conversion:
 
-> > print $ value (1 * h + 1 * min') s        -- Time in seconds of 1 hour + 1 minute.
+> > print $ numValue (1 *| h + 1 *| min') s        -- Time in seconds of 1 hour + 1 minute.
 > 3660.0
 
 Automatic unit reduction:
 
-> > print $ value (20 * gpm * 10 * min') gal  -- Note the minutes cancel each other out.
+> > print $ numValue (20 *| gpm * 10 *| min') gal  -- Note the minutes cancel each other out.
 > 200.0
 
 And consistency checking:
 
-> > print $ value (22 * mph + 3 gal) mph      -- Note that speed (m/s) is inconsistent with volume (m^3).
+> > print $ numValue (22 *| mph + 3 *| gal) mph      -- Note that speed (m/s) is inconsistent with volume (m^3).
 > *** Exception: Incompatible units: [M]/[S] /= [M,M,M]/[]
+
+Infix function `/|` is the same as `numValue`.  The symbol is read as "divide out units."
+
+> > print $ 22 *| gpm * 10 *| min' /| gal
 
 And defining new units is easy:
 
 > -- | Millimeters, a measure of distance, is 1/1000 of a meter.
-> mm :: Value
+> mm :: Unit
 > mm = 0.001 * m
+> -- | Alternatively, use an SI prefix or SI prefix symbol
+> mm = milli m
+> mm = _m m
 
 > -- | Joules, a measure of energy, is one newton meter.
-> j :: Value
+> j :: Unit
 > j = n * m
 
+The `Quantity` of a `Value` or a `Unit` can be inspected.
+
+> > quantity j
+> Energy
+
+> > quantity $ 10 *| m / 2 *| s
+> Velocity
+
 -}
+{-# LANGUAGE EmptyDataDecls #-}
 module Data.EngineeringUnits
-  ( Value
-  , value
+  (
+  -- * Fundamental Types and Operations
+    Value
+  , Unit
+  , numValue
+  , (*|)
+  , (/|)
+  , Quantity
+  , quantity
 
   -- * SI Prefix Names <<http://physics.nist.gov/cuu/Units/prefixes.html (NIST listing)>>
   , yocto
@@ -134,87 +165,138 @@ module Data.EngineeringUnits
 import           Data.List
 
 -- | The base units for distance, time, mass, and revolutions.
-data Unit = M | S | Kg | Rev deriving (Eq, Ord, Show)
+data BaseUnit = Kg | M | Rev | S deriving (Eq, Ord, Show)
 
--- | A value is a number and its associated units.
-data Value = Value Double [Unit] [Unit] deriving (Show, Eq, Ord)
+-- | A value is a number and its associated units.  It can be either a Unit
+-- or a Value, depending on the phantom type.
+data Dim a = Dim Double [BaseUnit] [BaseUnit] deriving (Show, Eq, Ord)
+data DUnit
+data DValue
+type Unit = Dim DUnit
+type Value = Dim DValue
 
-instance Num Value where
-  a@(Value aV _ _) + b@(Value bV _ _) = same a b $ aV + bV
-  a@(Value aV _ _) - b@(Value bV _ _) = same a b $ aV - bV
-  Value aV aN aD * Value bV bN bD = normalize $ Value (aV * bV) (aN ++ bN) (aD ++ bD)
-  fromInteger a = Value (fromIntegral a) [] []
-  negate (Value v n d) = Value (negate v) n d
-  abs    (Value v n d) = Value (abs    v) n d
-  signum (Value v n d) = Value (signum v) n d
+instance Num (Dim a) where
+  a@(Dim aV _ _) + b@(Dim bV _ _) = same a b $ aV + bV
+  a@(Dim aV _ _) - b@(Dim bV _ _) = same a b $ aV - bV
+  Dim aV aN aD * Dim bV bN bD = normalize $ Dim (aV * bV) (aN ++ bN) (aD ++ bD)
+  fromInteger a = Dim (fromIntegral a) [] []
+  negate (Dim v n d) = Dim (negate v) n d
+  abs    (Dim v n d) = Dim (abs    v) n d
+  signum (Dim v n d) = Dim (signum v) n d
 
-instance Fractional Value where
-  Value aV aN aD / Value bV bN bD = normalize $ Value (aV / bV) (aN ++ bD) (aD ++ bN)
-  recip (Value v n d) = Value (recip v) d n
-  fromRational a = Value (fromRational a) [] []
+instance Fractional (Dim a) where
+  Dim aV aN aD / Dim bV bN bD = normalize $ Dim (aV / bV) (aN ++ bD) (aD ++ bN)
+  recip (Dim v n d) = Dim (recip v) d n
+  fromRational a = Dim (fromRational a) [] []
 
-instance Floating Value where
-  pi    = Value pi [] []
-  exp   = error "Not supported yet for Value: exp  "
-  log   = error "Not supported yet for Value: log  "
-  sin   = error "Not supported yet for Value: sin  "
-  cos   = error "Not supported yet for Value: cos  "
-  sinh  = error "Not supported yet for Value: sinh "
-  cosh  = error "Not supported yet for Value: cosh "
-  asin  = error "Not supported yet for Value: asin "
-  acos  = error "Not supported yet for Value: acos "
-  atan  = error "Not supported yet for Value: atan "
-  asinh = error "Not supported yet for Value: asinh"
-  acosh = error "Not supported yet for Value: acosh"
-  atanh = error "Not supported yet for Value: atanh"
+instance Floating (Dim a) where
+  pi    = Dim pi [] []
+  exp   = error "Not supported yet for Dim: exp  "
+  log   = error "Not supported yet for Dim: log  "
+  sin   = error "Not supported yet for Dim: sin  "
+  cos   = error "Not supported yet for Dim: cos  "
+  sinh  = error "Not supported yet for Dim: sinh "
+  cosh  = error "Not supported yet for Dim: cosh "
+  asin  = error "Not supported yet for Dim: asin "
+  acos  = error "Not supported yet for Dim: acos "
+  atan  = error "Not supported yet for Dim: atan "
+  asinh = error "Not supported yet for Dim: asinh"
+  acosh = error "Not supported yet for Dim: acosh"
+  atanh = error "Not supported yet for Dim: atanh"
 
 -- | Normalize a value, i.e. simplify and sort units.
-normalize :: Value -> Value
-normalize a@(Value _ n d) = order $ reduce (n ++ d) a
+normalize :: Dim a -> Dim a
+normalize a@(Dim _ n d) = order $ reduce (n ++ d) a
   where
-  reduce :: [Unit] -> Value -> Value
+  reduce :: [BaseUnit] -> Dim a -> Dim a
   reduce [] a = a
-  reduce (a : rest) (Value v n d)
-    | elem a n && elem a d = reduce rest $ Value v (delete a n) (delete a d)
-    | otherwise            = reduce rest $ Value v n d
-  order :: Value -> Value
-  order (Value v n d) = Value v (sort n) (sort d)
+  reduce (a : rest) (Dim v n d)
+    | elem a n && elem a d = reduce rest $ Dim v (delete a n) (delete a d)
+    | otherwise            = reduce rest $ Dim v n d
+  order :: Dim a -> Dim a
+  order (Dim v n d) = Dim v (sort n) (sort d)
 
 -- | Create a value if two units are compatible.
-same :: Value -> Value -> Double -> Value
-same (Value _ aN aD) (Value _ bN bD) v
-  | aN == bN && aD == bD = Value v aN aD
+same :: Dim a -> Dim b -> Double -> Dim a
+same (Dim _ aN aD) (Dim _ bN bD) v
+  | aN == bN && aD == bD = Dim v aN aD
   | otherwise = error $ "Incompatible units: " ++ show aN ++ "/" ++ show aD ++ " /= " ++ show bN ++ "/" ++ show bD
 
--- | Extract a value in the given units.
+-- | Extract the numeric value of a Value in the given Unit.  An error
+-- results if the Quanity and Unit are not dimensionally consistent.
 --
---   > value val units
---   > value (2.54 * cm) in'
-value :: Value -> Value -> Double
-value val@(Value v _ _) units@(Value k _ _) = result
+--   > numValue quant units
+--   > numValue (2.54 [ cm) in'
+numValue :: Value -> Unit -> Double
+numValue val@(Dim v _ _) units@(Dim k _ _) = result
   where
-  Value result _ _ = same val units $ v / k
+  Dim result _ _ = same val units $ v / k
 
-yocto = (*) 1e-24
-zepto = (*) 1e-21
-atto  = (*) 1e-18
-femto = (*) 1e-15
-pico  = (*) 1e-12
-nano  = (*) 1e-9
-micro = (*) 1e-6
-milli = (*) 1e-3
-centi = (*) 1e-2
-deci  = (*) 1e-1
-deka  = (*) 1e+1
-hecto = (*) 1e+2
-kilo  = (*) 1e+3
-mega  = (*) 1e+6
-giga  = (*) 1e+9
-tera  = (*) 1e+12
-peta  = (*) 1e+15
-exa   = (*) 1e+18
-zetta = (*) 1e+21
-yotta = (*) 1e+24
+-- | Multiply a numeric value by a Unit to make a Value.
+(*|) :: Double -> Unit -> Value
+num *| (Dim m n d) = Dim (num*m) n d
+
+-- | Infix form of numValue. Divide a `Value` by a `Unit` to turn it into a
+-- numeric value.
+(/|) :: Value -> Unit -> Double
+q /| u = numValue q u
+infixl 1 /|
+
+-- | Type describing the significance of a calculated `Value` or `Unit`.
+data Quantity = Length | Time | Mass | Rotation
+              | Area | Volume | Velocity | Acceleration
+              | Wavenumber | Density | SpecificVolume
+              | Energy | Power | Momentum | Force | Frequency
+              | Other
+              deriving (Eq, Ord, Show)
+
+-- | Inspect a `Value` or `Unit` to determine its `Quantity`.
+quantity :: Dim a -> Quantity
+quantity (Dim _ [M]       [])       = Length
+quantity (Dim _ [Kg]      [])       = Mass
+quantity (Dim _ [S]       [])       = Time
+quantity (Dim _ [Rev]     [])       = Rotation
+quantity (Dim _ [M,M]     [])       = Area
+quantity (Dim _ [M,M,M]   [])       = Volume
+quantity (Dim _ [M]       [S])      = Velocity
+quantity (Dim _ [M]       [S,S])    = Acceleration
+quantity (Dim _ []        [M])      = Wavenumber
+quantity (Dim _ [Kg]      [M,M,M])  = Density
+quantity (Dim _ [M,M,M]   [Kg])     = SpecificVolume
+quantity (Dim _ [Kg,M,M]  [S,S])    = Energy
+quantity (Dim _ [Kg,M,M]  [S,S,S])  = Power
+quantity (Dim _ [Kg,M]    [S])      = Momentum
+quantity (Dim _ [Kg,M]    [S,S])    = Force
+quantity (Dim _ []        [S])      = Frequency
+quantity (Dim{})                    = Other
+
+-- | Tranform a `Unit` into a multiple of another `Unit`.
+--
+-- > kilo = prefix 1e3
+-- > km = kilo m
+prefix :: Double -> Unit -> Unit
+prefix a = (*) (Dim a [] [])
+
+yocto = prefix 1e-24
+zepto = prefix 1e-21
+atto  = prefix 1e-18
+femto = prefix 1e-15
+pico  = prefix 1e-12
+nano  = prefix 1e-9
+micro = prefix 1e-6
+milli = prefix 1e-3
+centi = prefix 1e-2
+deci  = prefix 1e-1
+deka  = prefix 1e+1
+hecto = prefix 1e+2
+kilo  = prefix 1e+3
+mega  = prefix 1e+6
+giga  = prefix 1e+9
+tera  = prefix 1e+12
+peta  = prefix 1e+15
+exa   = prefix 1e+18
+zetta = prefix 1e+21
+yotta = prefix 1e+24
 
 _y  = yocto
 _z  = zepto
@@ -239,15 +321,15 @@ _Y  = yotta
 
 
 -- | Meters.
-m    = Value 1 [M]   []
+m    = Dim 1 [M]   [] :: Unit
 -- | Meters ^ 2.
 m2   = m * m
 -- | Seconds.
-s    = Value 1 [S]   []
+s    = Dim 1 [S]   [] :: Unit
 -- | Kilograms.
-kg   = Value 1 [Kg]  []
+kg   = Dim 1 [Kg]  [] :: Unit
 -- | Revolutions.
-rev  = Value 1 [Rev] []
+rev  = Dim 1 [Rev] [] :: Unit
 -- | Seconds ^ 2.
 s2   = s * s
 -- | Seconds ^ 3.
@@ -310,8 +392,8 @@ rpm  = rev / min'
 gpm  = gal / min'
 -- | Liters per minute.
 lpm  = l / min'
--- | Radians per revolution: 2 * pi / rev
-radsPerRev = 2 * pi / rev
+-- | Radians per revolution: 2 * pi / (1 *| rev)
+radsPerRev = 2 * pi / (1 *| rev)
 -- | Joules.
 j    = n * m
 -- | BTUs.
